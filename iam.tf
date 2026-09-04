@@ -23,12 +23,17 @@ locals {
       "roles/logging.viewer",
       # VM and GPU metrics.
       "roles/monitoring.viewer",
+      # Read GPU quota. The newer cards report through the Cloud Quotas API
+      # (GPUS_PER_GPU_FAMILY) rather than the legacy per region metrics, and
+      # cloudquotas.quotas.get lives in none of the roles above. Without this the
+      # cloudquotas API enabled by this module cannot be called by its own grantees.
+      "roles/cloudquotas.viewer",
     ],
     var.grant_firewall_management ? ["roles/compute.securityAdmin"] : [],
   )
 
   operator_role_bindings = {
-    for pair in setproduct(local.operator_project_roles, var.operator_members) :
+    for pair in setproduct(local.operator_project_roles, toset(var.operator_members)) :
     "${pair[0]}|${pair[1]}" => {
       role   = pair[0]
       member = pair[1]

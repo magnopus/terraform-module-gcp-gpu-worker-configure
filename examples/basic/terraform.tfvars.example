@@ -1,0 +1,15 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored.
+
+project_id = "your-project-id"
+
+# Who should be able to provision and manage the GPU worker VM.
+# A group is preferred, so staffing changes do not need another Terraform run.
+operator_members = [
+  "group:gpu-operators@example.com",
+]
+
+# Region for Cloud NAT. Also the provider default.
+region = "us-west1"
+
+# Set true if the VM will have no external IP.
+enable_nat = false

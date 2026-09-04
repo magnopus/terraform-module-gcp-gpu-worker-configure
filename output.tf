@@ -1,5 +1,7 @@
 # The values the provisioning engineer needs once this module has been applied.
-# Running `terraform output` and sending the result back is the whole handover.
+# Running `terraform output -json` and sending the result back is the whole handover.
+# Use -json rather than plain output: a null region renders as tostring(null) in the
+# human-readable form, which reads like a fault rather than "NAT is disabled".
 
 output "service_account_email" {
   description = "Email of the GPU worker's runtime service account. Passed to --service-account when the VM is created."
@@ -40,6 +42,12 @@ output "nat_enabled" {
 output "ssh_firewall_rule" {
   description = "Name of the inbound SSH rule, or null when the project owner creates it themselves."
   value       = var.enable_ssh_firewall ? google_compute_firewall.iap_ssh[0].name : null
+  sensitive   = false
+}
+
+output "firewall_management_granted" {
+  description = "Whether roles/compute.securityAdmin was granted. False means the project owner owns the SSH firewall rule, so the provisioning engineer cannot adjust it. Explicit so the handover distinguishes a deliberate opt-out from a partial apply."
+  value       = var.grant_firewall_management
   sensitive   = false
 }
 

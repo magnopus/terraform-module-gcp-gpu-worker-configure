@@ -27,7 +27,7 @@ variable "network_tag" {
 
 variable "grant_firewall_management" {
   type        = bool
-  description = "Grant the operators roles/compute.securityAdmin so they can adjust the SSH source range without raising a change request. Set to false if you would rather own the firewall rule yourself. Note that GCP cannot scope firewall permissions to a single rule, so this role covers all firewalls in the project."
+  description = "Grant the operators roles/compute.securityAdmin. The provisioning tooling creates its own per instance firewall rules, so this is required for provisioning to work rather than a convenience. Setting it false will make provisioning fail: a non-owner operator is denied compute.firewalls.create partway through, verified against a scoped identity. Note that GCP cannot scope firewall permissions to a single rule, so this role covers all firewalls in the project, which matters more on an established project than a dedicated one."
   default     = true
 }
 
@@ -57,10 +57,15 @@ variable "network" {
 
 variable "enabled_apis" {
   type        = list(string)
-  description = "APIs enabled on the project. compute is required to create the VM, iap backs SSH without a public IP, and cloudquotas allows the GPU quota to be managed through the API rather than the console."
+  description = "APIs enabled on the project. compute is required to create the VM, iap backs SSH without a public IP, cloudquotas allows GPU quota to be read through the API rather than the console, and cloudresourcemanager backs this module's own project IAM bindings when it is applied by a service account."
   default = [
     "compute.googleapis.com",
     "iap.googleapis.com",
     "cloudquotas.googleapis.com",
+    # Project IAM bindings are Resource Manager calls. When this module is applied
+    # by a service account rather than a human, the quota project resolves to the
+    # target project and the API must be enabled there or the bindings fail. User
+    # credentials resolve elsewhere and mask this, so it only shows up in CI.
+    "cloudresourcemanager.googleapis.com",
   ]
 }

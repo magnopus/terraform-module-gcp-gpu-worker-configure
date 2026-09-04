@@ -35,8 +35,12 @@ module "gpu_worker_project" {
 Then send the outputs back to whoever is provisioning:
 
 ```bash
-terraform output
+terraform output -json
 ```
+
+Use `-json` rather than plain `terraform output`. When `enable_nat` is false the
+region is null, which the human-readable form prints as `tostring(null)` and reads
+like a fault rather than "NAT is disabled".
 
 ## Access granted
 
@@ -53,7 +57,8 @@ only and is therefore much narrower than it looks.
 | `roles/iap.tunnelResourceAccessor` | Reach the VM through Google's IAP tunnel |
 | `roles/logging.viewer` | Serial console and VM logs when a boot or driver install fails |
 | `roles/monitoring.viewer` | VM and GPU metrics |
-| `roles/compute.securityAdmin` | Adjust the SSH rule without a change request. Optional, see `grant_firewall_management` |
+| `roles/cloudquotas.viewer` | Read GPU quota. Newer cards report through the Cloud Quotas API rather than the legacy per region metrics |
+| `roles/compute.securityAdmin` | The provisioning tooling creates a firewall rule per worker, so this is required for provisioning rather than a convenience. See `grant_firewall_management` |
 | `roles/iam.serviceAccountUser` | Attach the runtime service account when creating the VM. Granted on the service account, not the project |
 
 These are used day to day rather than once. GPU VMs are stopped when idle to
@@ -62,8 +67,36 @@ zone or a new worker image ships.
 
 `roles/compute.securityAdmin` is the broadest of these, and GCP cannot scope
 firewall permissions to a single rule, so it covers all firewalls in the
-project. Set `grant_firewall_management = false` if you would rather own the
-SSH rule yourself.
+project. Setting `grant_firewall_management = false` will make provisioning fail. A non-owner
+operator is denied `compute.firewalls.create` partway through, which is a permission
+error midway rather than a clean refusal up front. Only set it false if the project
+owner is creating ingress rules for each worker by hand.
+
+## Check existing ingress on the network you supply
+
+GCP firewall rules are additive. Priority only arbitrates between allow and deny,
+so a narrow allow rule does **not** override a broad one. Both simply apply.
+
+This matters because GCP's auto-created `default` VPC ships with
+`default-allow-ssh`, which permits `0.0.0.0/0` to tcp:22 with no target tags. On a
+project using that network, a worker with an external IP is reachable over SSH from
+the internet, regardless of the tag-scoped IAP rule this module creates. Verified on
+a fresh project: enabling the compute API created the default VPC with that rule at
+priority 65534, alongside this module's rule at priority 1000. The lower number looks
+like it wins. It does not, because both are allow rules.
+
+Before applying, audit ingress on whichever network you pass:
+
+```bash
+gcloud compute firewall-rules list --project=PROJECT_ID \
+  --filter="direction=INGRESS AND sourceRanges:0.0.0.0/0" \
+  --format="table(name,network,priority,allowed[].map().firewall_rule().list(),targetTags.list())"
+```
+
+Two ways to close it. Delete or scope any `0.0.0.0/0` ingress on that network, or
+give the worker no external IP at all and reach it only over the IAP tunnel, which
+makes the pre-existing rules unreachable. The second is the stronger option and needs
+`enable_nat = true` so the VM still has outbound access.
 
 ## Prerequisites this module cannot cover
 
