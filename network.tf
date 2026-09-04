@@ -46,6 +46,16 @@ resource "google_compute_router" "gpu_worker" {
   region  = var.region
   network = var.network
 
+  # Fail at plan rather than partway through apply. Without this, enable_nat with no
+  # region plans clean and then fails after the APIs, service account, IAM bindings
+  # and firewall rule already exist, leaving a half configured project.
+  lifecycle {
+    precondition {
+      condition     = var.region != null
+      error_message = "region must be set when enable_nat is true. Cloud Router and NAT are regional resources."
+    }
+  }
+
   depends_on = [google_project_service.this]
 }
 
@@ -57,8 +67,20 @@ resource "google_compute_router_nat" "gpu_worker" {
   region  = var.region
   router  = google_compute_router.gpu_worker[0].name
 
-  nat_ip_allocate_option             = "AUTO_ONLY"
-  source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
+  nat_ip_allocate_option = "AUTO_ONLY"
+
+  # Defaults to every subnet in the region, which on an established project hands
+  # outbound internet to existing VMs that deliberately had none. Set nat_subnets to
+  # scope it to the worker's subnet only.
+  source_subnetwork_ip_ranges_to_nat = length(var.nat_subnets) > 0 ? "LIST_OF_SUBNETWORKS" : "ALL_SUBNETWORKS_ALL_IP_RANGES"
+
+  dynamic "subnetwork" {
+    for_each = toset(var.nat_subnets)
+    content {
+      name                    = subnetwork.value
+      source_ip_ranges_to_nat = ["ALL_IP_RANGES"]
+    }
+  }
 
   log_config {
     enable = true

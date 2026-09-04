@@ -55,6 +55,12 @@ variable "network" {
   default     = "default"
 }
 
+variable "nat_subnets" {
+  type        = list(string)
+  description = "Subnet names or self links that Cloud NAT applies to. Leave empty to cover every subnet in the region, which is fine on a dedicated project. On an established project, name the worker's subnet so existing VMs do not silently gain outbound internet access."
+  default     = []
+}
+
 variable "enabled_apis" {
   type        = list(string)
   description = "APIs enabled on the project. compute is required to create the VM, iap backs SSH without a public IP, cloudquotas allows GPU quota to be read through the API rather than the console, and cloudresourcemanager backs this module's own project IAM bindings when it is applied by a service account."
