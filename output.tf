@@ -23,13 +23,31 @@ output "region" {
 
 output "network" {
   description = "VPC network the GPU worker attaches to."
-  value       = var.network
+  value       = local.network_name
+  sensitive   = false
+}
+
+output "subnet" {
+  description = "Subnet the GPU worker attaches to. Required at VM create on a custom mode VPC. Null when an existing auto mode network is used."
+  value       = local.subnet_name
+  sensitive   = false
+}
+
+output "egress_managed" {
+  description = "Whether this module created the egress rules. False means the VPC's existing egress policy applies."
+  value       = var.manage_egress
   sensitive   = false
 }
 
 output "network_tag" {
   description = "Network tag that must be applied to GPU worker VMs for the SSH rule to match."
   value       = var.network_tag
+  sensitive   = false
+}
+
+output "nat_ip_addresses" {
+  description = "Static NAT egress addresses. Send these to Magnopus to allowlist. Empty when NAT addresses are auto-allocated."
+  value       = google_compute_address.nat[*].address
   sensitive   = false
 }
 

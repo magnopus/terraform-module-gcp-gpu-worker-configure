@@ -155,3 +155,102 @@ run "nat_can_be_scoped_to_subnets" {
     error_message = "Naming subnets should scope NAT to them."
   }
 }
+
+run "network_can_be_created_with_pga" {
+  command = plan
+
+  variables {
+    create_network = true
+    region         = "us-west1"
+  }
+
+  assert {
+    condition     = google_compute_subnetwork.this[0].private_ip_google_access
+    error_message = "A created subnet should have Private Google Access on."
+  }
+}
+
+run "created_network_without_region_fails_at_plan" {
+  command = plan
+
+  variables {
+    create_network = true
+  }
+
+  expect_failures = [google_compute_subnetwork.this]
+}
+
+run "egress_requires_magnopus_addresses" {
+  command = plan
+
+  variables {
+    manage_egress = true
+  }
+
+  # Silently granting no egress would leave a worker that boots and cannot reach us.
+  expect_failures = [
+    google_compute_firewall.egress_api,
+    google_compute_firewall.egress_queue,
+  ]
+}
+
+run "egress_creates_allow_and_deny" {
+  command = plan
+
+  variables {
+    manage_egress      = true
+    magnopus_api_ips   = ["192.0.2.10/32"]
+    magnopus_queue_ips = ["192.0.2.20/32"]
+  }
+
+  assert {
+    condition     = google_compute_firewall.egress_deny[0].priority == 65534
+    error_message = "The deny must sit below the allows so they still match."
+  }
+
+  # The queue address must not gain 443, and the API address must not gain AMQP.
+  assert {
+    condition     = google_compute_firewall.egress_api[0].destination_ranges == toset(["192.0.2.10/32"])
+    error_message = "The API rule should only cover the API addresses."
+  }
+
+  assert {
+    condition     = google_compute_firewall.egress_queue[0].destination_ranges == toset(["192.0.2.20/32"])
+    error_message = "The queue rule should only cover the queue addresses."
+  }
+}
+
+run "static_nat_ips_switch_to_manual" {
+  command = plan
+
+  variables {
+    enable_nat          = true
+    region              = "us-west4"
+    nat_static_ip_count = 1
+  }
+
+  # Auto-allocated addresses can change under an allowlist.
+  assert {
+    condition     = google_compute_router_nat.gpu_worker[0].nat_ip_allocate_option == "MANUAL_ONLY"
+    error_message = "Reserving NAT addresses should switch NAT to MANUAL_ONLY."
+  }
+
+  assert {
+    condition     = length(google_compute_address.nat) == 1
+    error_message = "One static address should be reserved."
+  }
+}
+
+run "nat_defaults_to_auto_allocation" {
+  command = plan
+
+  variables {
+    enable_nat = true
+    region     = "us-west4"
+  }
+
+  assert {
+    condition     = google_compute_router_nat.gpu_worker[0].nat_ip_allocate_option == "AUTO_ONLY"
+    error_message = "With no static addresses, NAT should stay AUTO_ONLY."
+  }
+}

@@ -21,7 +21,7 @@ What it configures:
 
 ```hcl
 module "gpu_worker_project" {
-  source = "github.com/magnopus/terraform-module-gcp-gpu-worker-configure?ref=v1.0.0"
+  source = "github.com/magnopus/terraform-module-gcp-gpu-worker-configure?ref=v0.1.0"
 
   project_id       = "acme-gpu-prod"
   operator_members = ["group:gpu-operators@example.com"]
@@ -51,11 +51,20 @@ like a fault rather than "NAT is disabled".
 | `network` | no | `default` | VPC the worker attaches to. See the ingress section below before accepting the default |
 | `region` | no | `null` | Region for Cloud NAT. Required when `enable_nat` is true |
 | `enable_nat` | no | `false` | Create Cloud Router and NAT. Needed when the VM has no external IP |
+| `nat_static_ip_count` | no | `0` | Reserve static NAT addresses. Set at least 1 if we need to allowlist your egress |
 | `enable_ssh_firewall` | no | `true` | Create the IAP SSH ingress rule |
 | `grant_firewall_management` | no | `true` | Grant `securityAdmin`. Setting false will break provisioning, see the access table |
 | `service_account_id` | no | `gpu-worker` | Account ID for the VM's runtime identity |
 | `network_tag` | no | `gpu-worker` | Tag the worker VM must carry for the SSH rule to match |
 | `enabled_apis` | no | 4 APIs | Override only if your project restricts API enablement |
+| `subnet` | no | `null` | Subnet the VM attaches to. Required on a custom mode VPC |
+| `create_network` | no | `false` | Create a dedicated VPC and subnet, with Private Google Access on |
+| `network_cidr` | no | `10.10.0.0/24` | Range for the created subnet |
+| `manage_egress` | no | `false` | Create egress allow rules and deny the rest |
+| `magnopus_api_ips` | when `manage_egress` | | Our API addresses, as CIDRs. Environment specific |
+| `magnopus_queue_ips` | when `manage_egress` | | Our job queue addresses, as CIDRs. Environment specific |
+| `magnopus_queue_ports` | no | `["5671","5672"]` | Job queue ports |
+| `create_pga_dns` | no | `false` | Private DNS for `googleapis.com` and `pkg.dev` |
 
 ### Outputs, and what each is for
 
@@ -67,8 +76,11 @@ Send all of these back. They are what the provisioning side needs to create the 
 | `service_account_email` | Passed to `--service-account` at VM create. The worker runs as this identity |
 | `network` | VPC the VM attaches to |
 | `network_tag` | Tag applied to the VM so the SSH rule matches it |
+| `subnet` | Subnet the VM attaches to, needed at create time on a custom mode VPC |
+| `egress_managed` | Whether this module owns the egress rules |
 | `region` | NAT region. Null when `enable_nat` is false, meaning any region with quota can be used |
 | `nat_enabled` | False means the VM needs an external IP to reach the internet |
+| `nat_ip_addresses` | Static egress addresses for us to allowlist. Empty when auto-allocated |
 | `ssh_firewall_rule` | Name of the ingress rule, or null when the project owner owns it |
 | `firewall_management_granted` | Whether ingress can be adjusted without a change request |
 | `granted_roles` | The roles actually granted, for review |
@@ -188,6 +200,31 @@ The alternative is to give the worker no external IP at all, which makes any
 pre-existing ingress unreachable regardless. That is the stronger option and needs
 `enable_nat = true` so the VM can still reach the internet.
 
+## Locked down egress
+
+GCP allows all egress by default, so nothing here is needed unless the VPC denies it.
+Where it does, set `manage_egress = true` and the module creates three rules plus a
+deny at priority 65534:
+
+| Destination | Port | For |
+|---|---|---|
+| `199.36.153.8/30` | 443 | Google APIs and Artifact Registry, over Private Google Access |
+| `magnopus_api_ips` | 443 | Job results and heartbeats |
+| `magnopus_queue_ips` | 5671, 5672 | The job queue. AMQP, not HTTP, so it cannot go through a web proxy. 5671 is TLS and is what environments use now |
+
+The Magnopus addresses differ per environment and are supplied with your
+configuration.
+
+Private Google Access needs DNS as well as the firewall rule. Set
+`create_pga_dns = true` and the module creates private zones for `googleapis.com` and
+`pkg.dev`. Without them those names resolve to public addresses and the deny blocks
+them, which reads like a broken rule rather than a DNS problem.
+
+One thing is not covered by these rules. On first boot the VM installs `gcsfuse`, and
+if it cannot be fetched from Magnopus storage it falls back to the Google and Ubuntu
+package mirrors, which sit behind CDNs and have no fixed addresses. Nothing reaches
+them once the worker is running.
+
 ## Prerequisites this module cannot cover
 
 **GPU quota.** New projects start at zero for the cards used here. Request
@@ -219,7 +256,7 @@ with IAM:
 | `compute.vmExternalIpAccess` | The VM cannot have an external IP, so `enable_nat` must be true |
 
 **Outbound network access.** The worker needs outbound HTTPS to the job queue
-(AMQPS 5671), the job API, `*.googleapis.com` for model weights and storage, and
+(AMQP over TLS on 5671), the job API, `*.googleapis.com` for model weights and storage, and
 the container registry. First boot additionally reaches `get.docker.com`,
 `download.docker.com`, `nvidia.github.io`, `packages.cloud.google.com` and the
 Ubuntu package mirrors.

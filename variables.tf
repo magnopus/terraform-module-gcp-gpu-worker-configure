@@ -75,3 +75,62 @@ variable "enabled_apis" {
     "cloudresourcemanager.googleapis.com",
   ]
 }
+
+variable "create_network" {
+  type        = bool
+  description = "Create a dedicated VPC and subnet for the worker instead of using an existing one. The subnet is created with Private Google Access enabled."
+  default     = false
+}
+
+variable "network_cidr" {
+  type        = string
+  description = "Primary range for the subnet created when create_network is true."
+  default     = "10.10.0.0/24"
+}
+
+variable "subnet" {
+  type        = string
+  description = "Subnet the worker VM attaches to. Required on a custom mode VPC, since GCP will not place an instance without one. Ignored when create_network is true."
+  default     = null
+}
+
+variable "manage_egress" {
+  type        = bool
+  description = "Create egress rules for the worker and deny everything else. Leave false where the VPC already allows outbound traffic. When true, magnopus_api_ips and magnopus_queue_ips must be set."
+  default     = false
+}
+
+variable "magnopus_api_ips" {
+  type        = list(string)
+  description = "Magnopus API addresses the worker posts job results and heartbeats to, as CIDRs. Supplied by Magnopus, and environment specific."
+  default     = []
+}
+
+variable "magnopus_queue_ips" {
+  type        = list(string)
+  description = "Magnopus job queue addresses, as CIDRs. AMQP, not HTTP, so this cannot go through an HTTP proxy. Supplied by Magnopus, and environment specific."
+  default     = []
+}
+
+variable "magnopus_queue_ports" {
+  type        = list(string)
+  description = "Job queue ports. 5671 is AMQP over TLS and is what environments use now. 5672 is plain AMQP, kept for any environment still on it."
+  default     = ["5671", "5672"]
+}
+
+variable "create_pga_dns" {
+  type        = bool
+  description = "Create private DNS zones sending googleapis.com and pkg.dev to the Private Google Access range. Without these, those names resolve to public addresses and an egress deny blocks them."
+  default     = false
+}
+
+variable "nat_static_ip_count" {
+  type        = number
+  description = "Reserve this many static addresses for Cloud NAT. Leave 0 to let Google allocate them, but those can change, so set at least 1 if Magnopus needs to allowlist your egress."
+  default     = 0
+
+  validation {
+    condition     = var.nat_static_ip_count >= 0
+    error_message = "nat_static_ip_count cannot be negative."
+  }
+}
