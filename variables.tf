@@ -61,6 +61,12 @@ variable "nat_subnets" {
   default     = []
 }
 
+variable "additional_nat_regions" {
+  type        = map(list(string))
+  description = "More regions to give Cloud NAT, beyond region, so a GPU stockout in one region does not block provisioning. Maps each region to the subnets NAT covers there, with the same meaning as nat_subnets: an empty list covers every subnet in that region. Only used when enable_nat is true. The worker's network needs a subnet in each region listed."
+  default     = {}
+}
+
 variable "enabled_apis" {
   type        = list(string)
   description = "APIs enabled on the project. compute is required to create the VM, iap backs SSH without a public IP, cloudquotas allows GPU quota to be read through the API rather than the console, and cloudresourcemanager backs this module's own project IAM bindings when it is applied by a service account."

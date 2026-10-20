@@ -44,7 +44,7 @@ resource "google_compute_router" "gpu_worker" {
   project = var.project_id
   name    = "${var.network_tag}-router"
   region  = var.region
-  network = var.network
+  network = local.network_name
 
   # Fail at plan rather than partway through apply. Without this, enable_nat with no
   # region plans clean and then fails after the APIs, service account, IAM bindings
@@ -90,6 +90,78 @@ resource "google_compute_router_nat" "gpu_worker" {
 
   dynamic "subnetwork" {
     for_each = toset(var.nat_subnets)
+    content {
+      name                    = subnetwork.value
+      source_ip_ranges_to_nat = ["ALL_IP_RANGES"]
+    }
+  }
+
+  log_config {
+    enable = true
+    filter = "ERRORS_ONLY"
+  }
+}
+
+# NAT in further regions, so a stockout in `region` is not a stockout everywhere: a VM
+# with no external IP can only be placed where NAT exists. Separate resources rather
+# than a for_each over every region, so adding regions never replaces the NAT above.
+# Router and NAT names repeat across regions, which GCP allows for regional resources.
+
+locals {
+  additional_nat_addresses = var.enable_nat ? {
+    for pair in setproduct(keys(var.additional_nat_regions), range(var.nat_static_ip_count)) :
+    "${pair[0]}-${pair[1]}" => { region = pair[0], index = pair[1] }
+  } : {}
+}
+
+resource "google_compute_router" "gpu_worker_additional" {
+  for_each = var.enable_nat ? var.additional_nat_regions : {}
+
+  project = var.project_id
+  name    = "${var.network_tag}-router"
+  region  = each.key
+  network = local.network_name
+
+  lifecycle {
+    precondition {
+      condition     = each.key != var.region
+      error_message = "additional_nat_regions must not include region, which already gets a router and NAT."
+    }
+  }
+
+  depends_on = [google_project_service.this]
+}
+
+resource "google_compute_address" "nat_additional" {
+  for_each = local.additional_nat_addresses
+
+  project      = var.project_id
+  name         = "${var.network_tag}-nat-${each.value.index}"
+  region       = each.value.region
+  address_type = "EXTERNAL"
+  description  = "Static egress address for GPU worker NAT (created by Terraform)"
+
+  depends_on = [google_project_service.this]
+}
+
+resource "google_compute_router_nat" "gpu_worker_additional" {
+  for_each = var.enable_nat ? var.additional_nat_regions : {}
+
+  project = var.project_id
+  name    = "${var.network_tag}-nat"
+  region  = each.key
+  router  = google_compute_router.gpu_worker_additional[each.key].name
+
+  nat_ip_allocate_option = var.nat_static_ip_count > 0 ? "MANUAL_ONLY" : "AUTO_ONLY"
+  nat_ips = [
+    for k, a in local.additional_nat_addresses : google_compute_address.nat_additional[k].self_link
+    if a.region == each.key
+  ]
+
+  source_subnetwork_ip_ranges_to_nat = length(each.value) > 0 ? "LIST_OF_SUBNETWORKS" : "ALL_SUBNETWORKS_ALL_IP_RANGES"
+
+  dynamic "subnetwork" {
+    for_each = toset(each.value)
     content {
       name                    = subnetwork.value
       source_ip_ranges_to_nat = ["ALL_IP_RANGES"]
