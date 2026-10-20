@@ -21,7 +21,7 @@ What it configures:
 
 ```hcl
 module "gpu_worker_project" {
-  source = "github.com/magnopus/terraform-module-gcp-gpu-worker-configure?ref=v0.1.0"
+  source = "github.com/magnopus/terraform-module-gcp-gpu-worker-configure?ref=v0.3.0"
 
   project_id       = "acme-gpu-prod"
   operator_members = ["group:gpu-operators@example.com"]
@@ -51,7 +51,9 @@ like a fault rather than "NAT is disabled".
 | `network` | no | `default` | VPC the worker attaches to. See the ingress section below before accepting the default |
 | `region` | no | `null` | Region for Cloud NAT. Required when `enable_nat` is true |
 | `enable_nat` | no | `false` | Create Cloud Router and NAT. Needed when the VM has no external IP |
-| `nat_static_ip_count` | no | `0` | Reserve static NAT addresses. Set at least 1 if we need to allowlist your egress |
+| `nat_subnets` | no | `[]` | Subnets in `region` that NAT covers. Empty covers every subnet in the region |
+| `additional_nat_regions` | no | `{}` | More regions to give NAT, each mapped to its subnets. See NAT in more than one region |
+| `nat_static_ip_count` | no | `0` | Static NAT addresses to reserve in each NAT region. Set at least 1 if we need to allowlist your egress |
 | `enable_ssh_firewall` | no | `true` | Create the IAP SSH ingress rule |
 | `grant_firewall_management` | no | `true` | Grant `securityAdmin`. Setting false will break provisioning, see the access table |
 | `service_account_id` | no | `gpu-worker` | Account ID for the VM's runtime identity |
@@ -79,11 +81,35 @@ Send all of these back. They are what the provisioning side needs to create the 
 | `subnet` | Subnet the VM attaches to, needed at create time on a custom mode VPC |
 | `egress_managed` | Whether this module owns the egress rules |
 | `region` | NAT region. Null when `enable_nat` is false, meaning any region with quota can be used |
+| `nat_regions` | Every region with NAT, `region` included. A worker with no external IP can only be placed in these |
 | `nat_enabled` | False means the VM needs an external IP to reach the internet |
 | `nat_ip_addresses` | Static egress addresses for us to allowlist. Empty when auto-allocated |
 | `ssh_firewall_rule` | Name of the ingress rule, or null when the project owner owns it |
 | `firewall_management_granted` | Whether ingress can be adjusted without a change request |
 | `granted_roles` | The roles actually granted, for review |
+
+### NAT in more than one region
+
+A worker with no external IP can only be placed in a region with NAT. With NAT in one
+region, a GPU stockout there blocks provisioning entirely, even when you hold quota
+elsewhere. List further regions in `additional_nat_regions`, each with the worker's
+subnet in that region:
+
+```hcl
+  enable_nat  = true
+  region      = "us-west1"
+  nat_subnets = ["gpu-worker-us-west1"]
+
+  additional_nat_regions = {
+    "us-central1" = ["gpu-worker-us-central1"]
+    "us-east5"    = ["gpu-worker-us-east5"]
+  }
+```
+
+The network needs a subnet in every region listed, and the regions are only useful
+where you hold GPU quota. Adding regions to an existing apply only creates resources:
+the NAT in `region` stays as it is, so running workers keep their egress. Egress
+firewall rules apply across the whole network, so they need no change.
 
 ### Wait a minute before provisioning
 

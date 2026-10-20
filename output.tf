@@ -21,6 +21,12 @@ output "region" {
   sensitive   = false
 }
 
+output "nat_regions" {
+  description = "Every region with Cloud NAT: region plus additional_nat_regions. Empty when enable_nat is false. A worker with no external IP can only be placed in these."
+  value       = var.enable_nat && var.region != null ? sort(concat([var.region], keys(var.additional_nat_regions))) : []
+  sensitive   = false
+}
+
 output "network" {
   description = "VPC network the GPU worker attaches to."
   value       = local.network_name
@@ -47,7 +53,7 @@ output "network_tag" {
 
 output "nat_ip_addresses" {
   description = "Static NAT egress addresses. Send these to Magnopus to allowlist. Empty when NAT addresses are auto-allocated."
-  value       = google_compute_address.nat[*].address
+  value       = concat(google_compute_address.nat[*].address, [for a in google_compute_address.nat_additional : a.address])
   sensitive   = false
 }
 

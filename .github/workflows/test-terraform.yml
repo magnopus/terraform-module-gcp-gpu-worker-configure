@@ -1,0 +1,45 @@
+name: Test Terraform
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Standalone rather than magnopus/github-actions-workflows: this repo is public and
+# cannot call a private reusable workflow. The tests are offline, so no secrets.
+jobs:
+  test:
+    name: Test Terraform
+    runs-on: ubuntu-24.04
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.9.8
+          terraform_wrapper: false
+
+      - name: Terraform Format
+        run: terraform fmt -check -recursive
+
+      # Customers copy the example, so catch it drifting from the module's inputs.
+      - name: Validate Example
+        working-directory: examples/basic
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
+
+      - name: Terraform Test
+        run: ./tests/run.sh

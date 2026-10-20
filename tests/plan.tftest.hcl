@@ -156,6 +156,90 @@ run "nat_can_be_scoped_to_subnets" {
   }
 }
 
+run "additional_nat_regions_get_their_own_nat" {
+  command = plan
+
+  variables {
+    enable_nat  = true
+    region      = "us-west4"
+    nat_subnets = ["worker-us-west4"]
+    additional_nat_regions = {
+      "us-west1"    = ["worker-us-west1"]
+      "us-central1" = []
+    }
+  }
+
+  # The NAT in region keeps its address, so upgrading does not replace the NAT that
+  # running workers depend on.
+  assert {
+    condition     = length(google_compute_router_nat.gpu_worker) == 1 && google_compute_router_nat.gpu_worker[0].region == "us-west4"
+    error_message = "Adding regions should leave the NAT in region where it is."
+  }
+
+  # Each region takes its own subnets. A subnet from another region fails at apply.
+  assert {
+    condition     = [for s in google_compute_router_nat.gpu_worker_additional["us-west1"].subnetwork : s.name] == ["worker-us-west1"]
+    error_message = "An additional region should be scoped to its own subnets only."
+  }
+
+  assert {
+    condition     = google_compute_router_nat.gpu_worker_additional["us-central1"].source_subnetwork_ip_ranges_to_nat == "ALL_SUBNETWORKS_ALL_IP_RANGES"
+    error_message = "A region with no subnets listed should cover the whole region."
+  }
+
+  assert {
+    condition     = output.nat_regions == tolist(["us-central1", "us-west1", "us-west4"])
+    error_message = "nat_regions should list region and every additional region."
+  }
+}
+
+run "additional_nat_region_cannot_repeat_region" {
+  command = plan
+
+  variables {
+    enable_nat             = true
+    region                 = "us-west4"
+    additional_nat_regions = { "us-west4" = [] }
+  }
+
+  # A second router of the same name in the same region plans clean and fails at apply.
+  expect_failures = [google_compute_router.gpu_worker_additional]
+}
+
+run "static_nat_ips_reserved_in_every_region" {
+  command = plan
+
+  variables {
+    enable_nat             = true
+    region                 = "us-west4"
+    nat_static_ip_count    = 1
+    additional_nat_regions = { "us-west1" = [] }
+  }
+
+  # An allowlist built from nat_ip_addresses would otherwise miss workers outside region.
+  assert {
+    condition     = length(google_compute_address.nat_additional) == 1 && google_compute_router_nat.gpu_worker_additional["us-west1"].nat_ip_allocate_option == "MANUAL_ONLY"
+    error_message = "Each additional region should reserve its own static addresses."
+  }
+}
+
+run "nat_router_joins_the_created_network" {
+  command = plan
+
+  variables {
+    create_network = true
+    enable_nat     = true
+    region         = "us-west1"
+  }
+
+  # Regression: the router took var.network, so with a created network NAT landed on
+  # the default VPC and the worker had no egress.
+  assert {
+    condition     = google_compute_router.gpu_worker[0].network == "musubi-gpu-worker-vpc"
+    error_message = "The NAT router should attach to the network the worker uses."
+  }
+}
+
 run "network_can_be_created_with_pga" {
   command = plan
 
