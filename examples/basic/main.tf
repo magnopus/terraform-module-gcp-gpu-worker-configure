@@ -5,7 +5,7 @@
 #   terraform init
 #   terraform plan
 #   terraform apply
-#   terraform output
+#   terraform output -json
 
 terraform {
   required_providers {
@@ -54,15 +54,10 @@ module "gpu_worker_project" {
   enable_nat = var.enable_nat
 }
 
-output "handover" {
+# The whole module, not a selection of its outputs: the provisioning side reads all
+# of them, and an exported module keeps its nulls (region when NAT is off) where a
+# root output set to null is dropped. Send `terraform output -json` back as is.
+output "gpu_worker" {
   description = "Send these values to whoever is provisioning the GPU worker."
-  value = {
-    project_id            = module.gpu_worker_project.project_id
-    region                = module.gpu_worker_project.region
-    service_account_email = module.gpu_worker_project.service_account_email
-    network               = module.gpu_worker_project.network
-    network_tag           = module.gpu_worker_project.network_tag
-    nat_enabled           = module.gpu_worker_project.nat_enabled
-    ssh_firewall_rule     = module.gpu_worker_project.ssh_firewall_rule
-  }
+  value       = module.gpu_worker_project
 }
