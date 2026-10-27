@@ -30,7 +30,18 @@ module "gpu_worker_project" {
   enable_nat = true
   region     = "us-west1"
 }
+
+# Export the module whole, so its outputs reach `terraform output`.
+output "gpu_worker" {
+  value = module.gpu_worker_project
+}
 ```
+
+The `output` block is required. Terraform prints only the outputs your own
+configuration declares, so without it `terraform output -json` prints `{}`. Export
+the module whole rather than picking values from it: an exported module keeps its
+null values, such as `region` when NAT is off, and the provisioning side reads every
+output listed below.
 
 Then send the outputs back to whoever is provisioning:
 
