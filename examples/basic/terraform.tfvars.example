@@ -8,7 +8,12 @@ operator_members = [
   "serviceAccount:gpu-operator@artifacts-488618.iam.gserviceaccount.com",
 ]
 
-# Set true if the VM will have no external IP, and give it a region.
-# Leave false if the VM gets an external IP.
-enable_nat = false
+# The VPC the worker attaches to. Required. Avoid the project's default VPC unless
+# you have removed default-allow-ssh, which is open to the internet.
+network = "your-vpc"
+
+# Required: choose how the VM reaches the internet.
+# true:  Cloud NAT in region, and the VM needs no external IP.
+# false: no NAT, and the VM must be given an external IP.
+enable_nat = true
 region     = "us-west1"

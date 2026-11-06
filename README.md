@@ -10,7 +10,7 @@ What it configures:
   giving the VM a public IP.
 - **Runtime service account** — the identity the GPU VM runs as, instead of the
   default compute service account. It is granted nothing in this project by
-  design.
+  design, and it survives `terraform destroy`. See below.
 - **Operator access** — the IAM roles an engineer needs to find GPU capacity,
   create the VM, connect to it and keep it running. Listed in full below.
 - **Inbound SSH rule** (optional) — scoped to Google's IAP forwarding range and
@@ -21,12 +21,17 @@ What it configures:
 
 ```hcl
 module "gpu_worker_project" {
-  source = "github.com/magnopus/terraform-module-gcp-gpu-worker-configure?ref=v0.3.0"
+  source = "github.com/magnopus/terraform-module-gcp-gpu-worker-configure?ref=v1.0.0"
 
   project_id       = "acme-gpu-prod"
   operator_members = ["group:gpu-operators@example.com"]
 
-  # Only required when the VM will have no external IP.
+  # Required. The VPC the worker attaches to. Read "Check existing ingress" below
+  # before naming the project's `default` VPC.
+  network = "gpu-vpc"
+
+  # Required. true: Cloud NAT in `region`, and the VM needs no external IP.
+  # false: no NAT, and the VM must be given an external IP.
   enable_nat = true
   region     = "us-west1"
 }
@@ -59,16 +64,16 @@ like a fault rather than "NAT is disabled".
 |---|---|---|---|
 | `project_id` | yes | | The project to configure. Never created by this module |
 | `operator_members` | yes | | Who gets access. `user:`, `group:` or `serviceAccount:`. A group is preferred so staffing changes need no further Terraform run here |
-| `network` | no | `default` | VPC the worker attaches to. See the ingress section below before accepting the default |
-| `region` | no | `null` | Region for Cloud NAT. Required when `enable_nat` is true |
-| `enable_nat` | no | `false` | Create Cloud Router and NAT. Needed when the VM has no external IP |
+| `network` | yes | | VPC the worker attaches to. `null` only with `create_network = true`. See the ingress section below before naming `default` |
+| `enable_nat` | yes | | `true` creates Cloud Router and NAT, for a VM with no external IP. `false` creates none, and the VM needs an external IP |
+| `region` | when `enable_nat` | `null` | Region for Cloud NAT, and for the subnet `create_network` makes |
 | `nat_subnets` | no | `[]` | Subnets in `region` that NAT covers. Empty covers every subnet in the region |
 | `additional_nat_regions` | no | `{}` | More regions to give NAT, each mapped to its subnets. See NAT in more than one region |
 | `nat_static_ip_count` | no | `0` | Static NAT addresses to reserve in each NAT region. Set at least 1 if we need to allowlist your egress |
 | `enable_ssh_firewall` | no | `true` | Create the IAP SSH ingress rule |
 | `grant_firewall_management` | no | `true` | Grant `securityAdmin`. Setting false will break provisioning, see the access table |
-| `service_account_id` | no | `gpu-worker` | Account ID for the VM's runtime identity |
-| `network_tag` | no | `gpu-worker` | Tag the worker VM must carry for the SSH rule to match |
+| `service_account_id` | no | `gpu-worker` | Account ID for the VM's runtime identity, 6 to 30 characters. A v0.x project keeps `musubi-gpu-worker`, see Upgrading |
+| `network_tag` | no | `gpu-worker` | Tag the worker VM must carry for the SSH rule to match. Also prefixes every resource name. A v0.x project keeps `musubi-gpu-worker` |
 | `enabled_apis` | no | 4 APIs | Override only if your project restricts API enablement |
 | `subnet` | no | `null` | Subnet the VM attaches to. Required on a custom mode VPC |
 | `create_network` | no | `false` | Create a dedicated VPC and subnet, with Private Google Access on |
@@ -134,6 +139,50 @@ the provisioner fall back to scanning every region, so the run appears to work w
 behaving as though the project has no quota. On a first run, retry a 403 before
 treating it as a permissions problem.
 
+## Upgrading from v0.x
+
+v1.0.0 has breaking changes. It also needs google provider 7.33 or later, so run
+`terraform init -upgrade` if your lock file holds an older 7.x.
+
+| Change | What to do |
+|---|---|
+| `network` has no default | Name the worker's VPC. The old default was `default`, whose `default-allow-ssh` lets the whole internet reach tcp:22. If you relied on the default, set `network = "default"` knowingly and read "Check existing ingress" below |
+| `enable_nat` has no default | Choose. `true` with `region` (and `additional_nat_regions` for more regions), or `false`, and the VM gets an external IP. The old default was `false` |
+| `service_account_id` and `network_tag` default to `gpu-worker` (were `musubi-gpu-worker`) | Set both to `musubi-gpu-worker` to keep your existing runtime account, tag, firewall rules, routers and NATs, and the grants Magnopus made against the account. See below for what happens otherwise |
+| `roles/compute.osAdminLogin` is no longer granted | Nothing. It was never used. The plan shows one binding removed per operator |
+| The runtime service account survives destroy and re-apply | Nothing. The plan shows an in-place update to the account, not a replacement |
+| The README and `examples/basic` export the module whole | Nothing, if your configuration already has `output "gpu_worker" { value = module.<name> }` |
+
+To keep everything as it was:
+
+```hcl
+module "gpu_worker_project" {
+  source = "github.com/magnopus/terraform-module-gcp-gpu-worker-configure?ref=v1.0.0"
+
+  # ...your existing inputs...
+
+  network            = "default" # or whichever VPC you were using
+  enable_nat         = false     # or true, as you had it
+  service_account_id = "musubi-gpu-worker"
+  network_tag        = "musubi-gpu-worker"
+}
+```
+
+**If you take the new names on a project applied with v0.x**, the plan replaces the
+runtime account and renames every tag-derived resource. The old account is
+**deleted**, not left behind: v0.x recorded it with the provider's default
+`deletion_policy` of `DELETE`, and the destroy half of a replacement follows the
+policy already in state. A new `gpu-worker` account is created in its place, and
+grants Magnopus made against the old account do not carry over, so workers lose
+access to their models and images until Magnopus grants the new one. Firewall rules,
+routers and NATs are recreated under the new names, which briefly drops NAT egress
+for running workers, and workers already carrying the old tag no longer match the new
+rules. Check the plan for `must be replaced` on
+`google_service_account.gpu_worker` before applying.
+
+Once on v1, keep `service_account_id` fixed. A later rename leaves the old account in
+place (it is abandoned, not deleted) but still creates a new one without its grants.
+
 ## Access granted
 
 All are granted at project level to every member of `operator_members`, except
@@ -145,7 +194,6 @@ only and is therefore much narrower than it looks.
 | `roles/compute.viewer` | Read machine types, accelerator types, zones and quota, to find a zone with GPU capacity |
 | `roles/compute.instanceAdmin.v1` | Create, start, stop and delete the VM and its boot disk |
 | `roles/compute.networkUser` | Use the subnet and an ephemeral external IP |
-| `roles/compute.osAdminLogin` | SSH with sudo, to install drivers and run the worker stack |
 | `roles/iap.tunnelResourceAccessor` | Reach the VM through Google's IAP tunnel |
 | `roles/logging.viewer` | Serial console and VM logs when a boot or driver install fails |
 | `roles/monitoring.viewer` | VM and GPU metrics |
@@ -180,6 +228,28 @@ cause is that the VM is being created without `--service-account` and is falling
 to the default compute account. The fix is to attach the runtime account from
 `service_account_email`, not to widen the grant.
 
+## The runtime service account survives destroy and re-apply
+
+Magnopus grants the runtime account access to model weights and container images.
+Those grants attach to the account itself, not to its email: if the account is
+deleted and an account with the same email is created later, the new one holds none
+of them. So the module never deletes it:
+
+- `terraform destroy` removes the account from state and leaves it in GCP
+  (`deletion_policy = "ABANDON"`). Everything else the module made is destroyed.
+- A later `apply` finds the account already there and adopts it
+  (`create_ignore_already_exists = true`), so the same account, with its grants,
+  comes back.
+
+Two consequences:
+
+- **To really delete the account**, do it outside Terraform, after `destroy`:
+  `gcloud iam service-accounts delete gpu-worker@PROJECT_ID.iam.gserviceaccount.com`.
+- **An existing account with the same ID is adopted, not refused.** If something else
+  in the project already uses `gpu-worker`, set `service_account_id` to an ID of its
+  own, or this module will attach the worker to that account and grant operators
+  `actAs` on it.
+
 ## Changes that need coordinating with the provisioning tooling
 
 Some changes here are correct in isolation but break provisioning unless the tooling
@@ -194,7 +264,9 @@ changes at the same time. Sequence these deliberately.
 Changing `service_account_id` on an **existing** project is a breaking change rather
 than a cosmetic one. The account email is derived from it, so a re-apply creates a new
 account rather than renaming the old. Any grants made elsewhere against the old email
-keep pointing at the old account, which still exists.
+keep pointing at the old account, which v1 leaves in place. A project still holding
+an account created by v0.x is the exception: that account is deleted, see Upgrading
+from v0.x.
 
 ## Check existing ingress on the network you supply
 
@@ -298,15 +370,15 @@ the container registry. First boot additionally reaches `get.docker.com`,
 `download.docker.com`, `nvidia.github.io`, `packages.cloud.google.com` and the
 Ubuntu package mirrors.
 
-**The worker needs an egress path and this module does not create one by default.**
-`enable_nat` is false unless you set it. A VM with no external IP and no NAT has no
-outbound route at all, and because IAP still gives you a shell, the symptom is a box
-you can log into that cannot download anything. Pick one deliberately:
+**The worker needs an egress path, and `enable_nat` has no default so that you choose
+it.** A VM with no external IP and no NAT has no outbound route at all, and because
+IAP still gives you a shell, the symptom is a box you can log into that cannot
+download anything. Pick one deliberately:
 
 | Egress | What to set | Trade-off |
 |---|---|---|
 | Cloud NAT | `enable_nat = true` and a `region` | Bills hourly. Required for any worker without an external IP |
-| External IP | Leave `enable_nat = false` | Free, but read the ingress section first: on a stock VPC the worker becomes SSH reachable from the internet |
+| External IP | `enable_nat = false` | Free, but read the ingress section first: on a stock VPC the worker becomes SSH reachable from the internet |
 
 Private Google Access is worth enabling on the subnet, but it is **not** a substitute
 for NAT and this module neither enables nor checks it. Auto-created subnets ship with

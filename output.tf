@@ -31,6 +31,11 @@ output "network" {
   description = "VPC network the GPU worker attaches to."
   value       = local.network_name
   sensitive   = false
+
+  precondition {
+    condition     = var.create_network || var.network != null
+    error_message = "network must name the worker's VPC unless create_network is true. There is no default: the project's default VPC carries default-allow-ssh, open to the internet."
+  }
 }
 
 output "subnet" {

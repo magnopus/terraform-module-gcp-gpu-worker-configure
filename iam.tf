@@ -15,8 +15,6 @@ locals {
       "roles/compute.instanceAdmin.v1",
       # Use the subnet and an ephemeral external IP.
       "roles/compute.networkUser",
-      # SSH with sudo, to install drivers and run the worker stack.
-      "roles/compute.osAdminLogin",
       # Reach the VM through Google's IAP tunnel when it has no public IP.
       "roles/iap.tunnelResourceAccessor",
       # Serial console and VM logs when a boot or driver install fails.

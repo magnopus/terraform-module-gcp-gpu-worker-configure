@@ -15,14 +15,19 @@ variable "operator_members" {
 
 variable "service_account_id" {
   type        = string
-  description = "Account ID of the service account the GPU worker VM runs as. The resulting email is <id>@<project_id>.iam.gserviceaccount.com."
-  default     = "musubi-gpu-worker"
+  description = "Account ID of the service account the GPU worker VM runs as. The resulting email is <id>@<project_id>.iam.gserviceaccount.com. The account survives terraform destroy, and an existing account with this ID is adopted rather than recreated, so pick an ID nothing else in the project uses. A project first applied with v0.x should set musubi-gpu-worker to keep its existing account."
+  default     = "gpu-worker"
+
+  validation {
+    condition     = can(regex("^[a-z][-a-z0-9]{4,28}[a-z0-9]$", var.service_account_id))
+    error_message = "service_account_id must be 6 to 30 characters of lowercase letters, digits and hyphens, starting with a letter and not ending with a hyphen."
+  }
 }
 
 variable "network_tag" {
   type        = string
-  description = "Network tag applied to GPU worker VMs. The SSH firewall rule is scoped to this tag so it never applies to other machines in the project."
-  default     = "musubi-gpu-worker"
+  description = "Network tag applied to GPU worker VMs. The SSH firewall rule is scoped to this tag so it never applies to other machines in the project. Also prefixes the names of the firewall rules, routers, NATs, addresses and DNS zones this module creates. A project first applied with v0.x should set musubi-gpu-worker to keep its existing tag and resources."
+  default     = "gpu-worker"
 }
 
 variable "grant_firewall_management" {
@@ -39,8 +44,8 @@ variable "enable_ssh_firewall" {
 
 variable "enable_nat" {
   type        = bool
-  description = "Create a Cloud Router and Cloud NAT so the VM can reach the internet without an external IP. Required when org policy enforces constraints/compute.vmExternalIpAccess. Leave false if the VM will be given an external IP."
-  default     = false
+  description = "How the VM reaches the internet, chosen deliberately since there is no default. true creates a Cloud Router and Cloud NAT in region (and additional_nat_regions), so the VM needs no external IP; required when org policy enforces constraints/compute.vmExternalIpAccess. false creates no NAT, so the VM must be given an external IP or it has no outbound route at all."
+  nullable    = false
 }
 
 variable "region" {
@@ -51,8 +56,7 @@ variable "region" {
 
 variable "network" {
   type        = string
-  description = "Name or self link of the VPC network the GPU worker attaches to. Required when enable_nat or enable_ssh_firewall is true."
-  default     = "default"
+  description = "Name or self link of the VPC network the GPU worker attaches to. Required, with no default: the old default, the project's auto-created default VPC, carries default-allow-ssh, which opens tcp:22 to the whole internet. Set null only when create_network is true, which uses the network it creates instead."
 }
 
 variable "nat_subnets" {
@@ -84,7 +88,7 @@ variable "enabled_apis" {
 
 variable "create_network" {
   type        = bool
-  description = "Create a dedicated VPC and subnet for the worker instead of using an existing one. The subnet is created with Private Google Access enabled."
+  description = "Create a dedicated VPC and subnet for the worker instead of using an existing one, in which case set network to null. The subnet is created with Private Google Access enabled."
   default     = false
 }
 
