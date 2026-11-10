@@ -16,10 +16,158 @@
 variables {
   project_id       = "test-project"
   operator_members = ["user:a@example.com"]
+
+  # Required from v1. Every run below names them, as a customer now has to.
+  network    = "worker-vpc"
+  enable_nat = false
 }
 
 run "single_operator" {
   command = plan
+}
+
+run "default_names_carry_no_codename" {
+  command = plan
+
+  variables {
+    manage_egress      = true
+    magnopus_api_ips   = ["192.0.2.10/32"]
+    magnopus_queue_ips = ["192.0.2.20/32"]
+  }
+
+  assert {
+    condition     = google_service_account.gpu_worker.account_id == "gpu-worker" && output.network_tag == "gpu-worker"
+    error_message = "service_account_id and network_tag should both default to gpu-worker."
+  }
+
+  # Every name derived from the tag must stay a valid GCP name: lowercase, a letter
+  # first, no trailing hyphen, at most 63 characters.
+  assert {
+    condition = alltrue([
+      for n in [
+        google_compute_firewall.iap_ssh[0].name,
+        google_compute_firewall.egress_google_apis[0].name,
+        google_compute_firewall.egress_api[0].name,
+        google_compute_firewall.egress_queue[0].name,
+        google_compute_firewall.egress_deny[0].name,
+      ] : can(regex("^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$", n)) && !strcontains(n, "musubi")
+    ])
+    error_message = "Firewall rule names derived from the default tag should be valid and carry no codename."
+  }
+}
+
+run "default_names_valid_for_created_network_nat_and_dns" {
+  command = plan
+
+  variables {
+    network                = null
+    create_network         = true
+    enable_nat             = true
+    region                 = "us-west1"
+    nat_static_ip_count    = 1
+    additional_nat_regions = { "us-central1" = [] }
+    create_pga_dns         = true
+  }
+
+  assert {
+    condition = alltrue([
+      for n in concat(
+        [
+          google_compute_network.this[0].name,
+          google_compute_subnetwork.this[0].name,
+          google_compute_router.gpu_worker[0].name,
+          google_compute_router_nat.gpu_worker[0].name,
+          google_compute_address.nat[0].name,
+          google_compute_router.gpu_worker_additional["us-central1"].name,
+          google_compute_router_nat.gpu_worker_additional["us-central1"].name,
+        ],
+        [for a in google_compute_address.nat_additional : a.name],
+        [for z in google_dns_managed_zone.pga : z.name],
+      ) : can(regex("^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$", n)) && !strcontains(n, "musubi")
+    ])
+    error_message = "Network, subnet, router, NAT, address and DNS zone names derived from the default tag should be valid and carry no codename."
+  }
+}
+
+run "v0_names_can_be_kept" {
+  command = plan
+
+  variables {
+    service_account_id = "musubi-gpu-worker"
+    network_tag        = "musubi-gpu-worker"
+  }
+
+  # An existing project keeps its account, and with it every grant made against it.
+  assert {
+    condition     = google_service_account.gpu_worker.account_id == "musubi-gpu-worker" && google_compute_firewall.iap_ssh[0].name == "musubi-gpu-worker-allow-ssh"
+    error_message = "Setting both names to musubi-gpu-worker should reproduce the v0.x account and rule."
+  }
+}
+
+run "service_account_id_must_be_6_to_30_characters" {
+  command = plan
+
+  variables {
+    service_account_id = "gpu"
+  }
+
+  expect_failures = [var.service_account_id]
+}
+
+run "service_account_survives_destroy_and_reapply" {
+  command = plan
+
+  # Magnopus grants the worker its models and images against this account. A
+  # deleted and recreated account under the same email holds none of them.
+  assert {
+    condition     = google_service_account.gpu_worker.deletion_policy == "ABANDON"
+    error_message = "Destroy should leave the runtime account in GCP."
+  }
+
+  assert {
+    condition     = google_service_account.gpu_worker.create_ignore_already_exists == true
+    error_message = "A re-apply should adopt the abandoned account rather than fail on already exists."
+  }
+}
+
+run "network_has_no_default" {
+  command = plan
+
+  variables {
+    network             = null
+    enable_ssh_firewall = false
+  }
+
+  # The old default was the default VPC, whose default-allow-ssh is open to the
+  # internet. Omitting network is a missing required variable; null must not be a
+  # way back to an unnamed network either. The SSH rule is off here because, when a
+  # firewall rule or router is planned, its own "network is required" error fires
+  # first. This covers the case where nothing else would have caught it.
+  expect_failures = [output.network]
+}
+
+run "created_network_needs_no_network_name" {
+  command = plan
+
+  variables {
+    network        = null
+    create_network = true
+    region         = "us-west1"
+  }
+
+  assert {
+    condition     = output.network == "gpu-worker-vpc"
+    error_message = "With create_network, the worker should use the network the module creates."
+  }
+}
+
+run "no_nat_means_external_ips" {
+  command = plan
+
+  assert {
+    condition     = length(google_compute_router_nat.gpu_worker) == 0 && output.nat_enabled == false && length(output.nat_regions) == 0
+    error_message = "enable_nat = false should create no NAT and report it, so the VM is given an external IP."
+  }
 }
 
 run "duplicate_members_do_not_crash" {
@@ -227,6 +375,7 @@ run "nat_router_joins_the_created_network" {
   command = plan
 
   variables {
+    network        = null
     create_network = true
     enable_nat     = true
     region         = "us-west1"
@@ -235,7 +384,7 @@ run "nat_router_joins_the_created_network" {
   # Regression: the router took var.network, so with a created network NAT landed on
   # the default VPC and the worker had no egress.
   assert {
-    condition     = google_compute_router.gpu_worker[0].network == "musubi-gpu-worker-vpc"
+    condition     = google_compute_router.gpu_worker[0].network == "gpu-worker-vpc"
     error_message = "The NAT router should attach to the network the worker uses."
   }
 }

@@ -72,7 +72,15 @@ resource "google_project_service" "this" {
 # The VM runs as this identity rather than the default compute service account,
 # which keeps it obvious what the worker is doing. It is intentionally granted
 # nothing in this project. Everything the worker reads, model weights and
-# container images, is granted to this account on the Musubi side.
+# container images, is granted to this account on the Magnopus side.
+#
+# Those grants are pinned to this account. A deleted account cannot be brought
+# back by recreating the same email: GCP binds grants to the account's unique ID,
+# so a new account under the old email holds none of them. The account therefore
+# survives destroy (ABANDON drops it from state and leaves it in GCP), and a later
+# apply adopts it rather than failing on "already exists". Both are in-place
+# changes on an account a v0.x apply created, so upgrading with the same
+# service_account_id never replaces it.
 # ---------------------------------------------------------------------------
 
 resource "google_service_account" "gpu_worker" {
@@ -80,6 +88,10 @@ resource "google_service_account" "gpu_worker" {
   account_id   = var.service_account_id
   display_name = "GPU worker runtime identity (created by Terraform)"
   description  = "Attached to GPU worker VMs. Holds no permissions in this project by design."
+
+  # Needs google provider 7.33 or later, see versions.tf.
+  deletion_policy              = "ABANDON"
+  create_ignore_already_exists = true
 
   depends_on = [google_project_service.this]
 }
