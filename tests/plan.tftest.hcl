@@ -170,21 +170,6 @@ run "no_nat_means_external_ips" {
   }
 }
 
-run "os_admin_login_is_not_granted" {
-  command = plan
-
-  # Never used: SSH goes through instance metadata keys, not OS Login.
-  assert {
-    condition     = !contains(local.operator_project_roles, "roles/compute.osAdminLogin")
-    error_message = "roles/compute.osAdminLogin was dropped in v1 and should not be granted."
-  }
-
-  assert {
-    condition     = alltrue([for b in google_project_iam_member.operator : b.role != "roles/compute.osAdminLogin"])
-    error_message = "No project binding should carry roles/compute.osAdminLogin."
-  }
-}
-
 run "duplicate_members_do_not_crash" {
   command = plan
 

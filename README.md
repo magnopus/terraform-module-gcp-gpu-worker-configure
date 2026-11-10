@@ -149,7 +149,6 @@ v1.0.0 has breaking changes. It also needs google provider 7.33 or later, so run
 | `network` has no default | Name the worker's VPC. The old default was `default`, whose `default-allow-ssh` lets the whole internet reach tcp:22. If you relied on the default, set `network = "default"` knowingly and read "Check existing ingress" below |
 | `enable_nat` has no default | Choose. `true` with `region` (and `additional_nat_regions` for more regions), or `false`, and the VM gets an external IP. The old default was `false` |
 | `service_account_id` and `network_tag` default to `gpu-worker` (were `musubi-gpu-worker`) | Set both to `musubi-gpu-worker` to keep your existing runtime account, tag, firewall rules, routers and NATs, and the grants Magnopus made against the account. See below for what happens otherwise |
-| `roles/compute.osAdminLogin` is no longer granted | Nothing. It was never used. The plan shows one binding removed per operator |
 | The runtime service account survives destroy and re-apply | Nothing. The plan shows an in-place update to the account, not a replacement |
 | The README and `examples/basic` export the module whole | Nothing, if your configuration already has `output "gpu_worker" { value = module.<name> }` |
 
@@ -194,6 +193,7 @@ only and is therefore much narrower than it looks.
 | `roles/compute.viewer` | Read machine types, accelerator types, zones and quota, to find a zone with GPU capacity |
 | `roles/compute.instanceAdmin.v1` | Create, start, stop and delete the VM and its boot disk |
 | `roles/compute.networkUser` | Use the subnet and an ephemeral external IP |
+| `roles/compute.osAdminLogin` | SSH with sudo, to install drivers and run the worker stack |
 | `roles/iap.tunnelResourceAccessor` | Reach the VM through Google's IAP tunnel |
 | `roles/logging.viewer` | Serial console and VM logs when a boot or driver install fails |
 | `roles/monitoring.viewer` | VM and GPU metrics |
